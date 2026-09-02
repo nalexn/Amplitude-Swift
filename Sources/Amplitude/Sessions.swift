@@ -1,4 +1,8 @@
+#if AMPLITUDE_DISABLE_UIKIT
+import AmplitudeCoreNoUIKit
+#else
 import AmplitudeCore
+#endif
 import Foundation
 
 public class Sessions {
@@ -6,8 +10,11 @@ public class Sessions {
     private let storage: Storage
     private let timeline: Timeline
     private let context: AmplitudeContext
-    @Atomic private(set) var trackSessionEvents: Bool
-    private var remoteConfigSubscription: Any?
+    private let autocaptureManager: AutocaptureManager
+
+    private var trackSessionEvents: Bool {
+        autocaptureManager.isEnabled(.sessions)
+    }
 
     private var _sessionId: Int64 = -1
     private(set) var sessionId: Int64 {
@@ -60,6 +67,7 @@ public class Sessions {
     }
 
     init(amplitude: Amplitude) {
+        self.autocaptureManager = amplitude.autocaptureManager
         configuration = amplitude.configuration
         context = amplitude.amplitudeContext
         storage = amplitude.storage
@@ -67,16 +75,6 @@ public class Sessions {
         self._sessionId = amplitude.storage.read(key: .PREVIOUS_SESSION_ID) ?? -1
         self._lastEventId = amplitude.storage.read(key: .LAST_EVENT_ID) ?? 0
         self._lastEventTime = amplitude.storage.read(key: .LAST_EVENT_TIME) ?? -1
-        trackSessionEvents = configuration.autocapture.contains(.sessions)
-        if configuration.enableAutoCaptureRemoteConfig {
-            remoteConfigSubscription = context
-                .remoteConfigClient
-                .subscribe(key: Constants.RemoteConfig.Key.autocapture) { [weak self] config, _, _ in
-                    if let self, let sessions = config?["sessions"] as? Bool {
-                        trackSessionEvents = sessions
-                    }
-                }
-        }
     }
 
     func processEvent(event: BaseEvent, inForeground: Bool) -> [BaseEvent] {
@@ -95,7 +93,7 @@ public class Sessions {
             }
         } else if event.eventType == Constants.AMP_SESSION_END_EVENT {
             // do nothing
-        } else {
+        } else if event.sessionId != -1 {
             sessionEvents = self.startNewSessionIfNeeded(timestamp: eventTimeStamp, inForeground: inForeground)
         }
 
@@ -188,9 +186,4 @@ public class Sessions {
         return sessionEvents
     }
 
-    deinit {
-        if let remoteConfigSubscription {
-            context.remoteConfigClient.unsubscribe(remoteConfigSubscription)
-        }
-    }
 }

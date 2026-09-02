@@ -7,6 +7,12 @@
 
 import Foundation
 
+#if AMPLITUDE_DISABLE_UIKIT
+@_spi(Internal) import AmplitudeCoreNoUIKit
+#else
+@_spi(Internal) import AmplitudeCore
+#endif
+
 public class Configuration {
 
     public struct Defaults {
@@ -14,7 +20,7 @@ public class Configuration {
         public static let flushQueueSize = Constants.Configuration.FLUSH_QUEUE_SIZE
         public static let flushIntervalMillis = Constants.Configuration.FLUSH_INTERVAL_MILLIS
         public static let flushMaxRetries = Constants.Configuration.FLUSH_MAX_RETRIES
-        public static let logLevel = LogLevelEnum.WARN
+        public static let logLevel = LogLevelEnum.warn
         public static let minTimeBetweenSessionsMillis = Constants.Configuration.MIN_TIME_BETWEEN_SESSIONS_MILLIS
         public static let identifyBatchIntervalMillis = Constants.Configuration.IDENTIFY_BATCH_INTERVAL_MILLIS
         public static let serverZone = ServerZone.US
@@ -28,8 +34,9 @@ public class Configuration {
         public static let enableAutoCaptureRemoteConfig = true
         public static let trackingOptions = TrackingOptions()
         public static let networkTrackingOptions = NetworkTrackingOptions.default
-        @_spi(Frustration)
         public static let interactionsOptions = InteractionsOptions()
+        public static let enableDiagnostics = true
+        public static let enableRequestBodyCompression = false
     }
 
     public internal(set) var apiKey: String
@@ -76,8 +83,16 @@ public class Configuration {
     public var maxQueuedEventCount = -1
     var optOutChanged: ((Bool) -> Void)?
     public let enableAutoCaptureRemoteConfig: Bool
-    @_spi(Frustration)
     public var interactionsOptions: InteractionsOptions
+    public var enableDiagnostics: Bool
+
+    /// Controls request body compression **only** when a custom `serverUrl` is configured.
+    /// When using the SDK's default endpoints, request bodies are always compressed
+    /// regardless of this setting.
+    public var enableRequestBodyCompression: Bool
+
+    let remoteConfigClient: RemoteConfigClient
+    let diagnosticsClient: CoreDiagnostics
 
     @available(*, deprecated, message: "Please use the `autocapture` parameter instead.")
     public convenience init(
@@ -140,7 +155,6 @@ public class Configuration {
         self.defaultTracking = defaultTracking
     }
 
-    @_spi(Frustration)
     public init(
         apiKey: String,
         flushQueueSize: Int = Defaults.flushQueueSize,
@@ -172,7 +186,9 @@ public class Configuration {
         offline: Bool? = false,
         networkTrackingOptions: NetworkTrackingOptions = Defaults.networkTrackingOptions,
         enableAutoCaptureRemoteConfig: Bool = Defaults.enableAutoCaptureRemoteConfig,
-        interactionsOptions: InteractionsOptions = Defaults.interactionsOptions
+        interactionsOptions: InteractionsOptions = Defaults.interactionsOptions,
+        enableDiagnostics: Bool = Defaults.enableDiagnostics,
+        enableRequestBodyCompression: Bool = Defaults.enableRequestBodyCompression,
     ) {
         let normalizedInstanceName = Configuration.getNormalizeInstanceName(instanceName)
 
@@ -184,16 +200,27 @@ public class Configuration {
         self.diagonostics = Diagnostics()
         self.logLevel = logLevel
         self.loggerProvider = loggerProvider
+        self.serverZone = serverZone
+        self.enableDiagnostics = enableDiagnostics
+        self.remoteConfigClient = RemoteConfigClient(apiKey: self.apiKey,
+                                                     serverZone: self.serverZone,
+                                                     instanceName: self.instanceName,
+                                                     logger: self.loggerProvider)
+        self.diagnosticsClient = DiagnosticsClient(apiKey: self.apiKey,
+                                                   serverZone: self.serverZone,
+                                                   instanceName: self.instanceName,
+                                                   logger: self.loggerProvider,
+                                                   enabled: self.enableDiagnostics,
+                                                   remoteConfigClient: self.remoteConfigClient)
         self.storageProvider = storageProvider
-        ?? PersistentStorage(storagePrefix: PersistentStorage.getEventStoragePrefix(apiKey, normalizedInstanceName), logger: self.loggerProvider, diagonostics: self.diagonostics)
+        ?? PersistentStorage(storagePrefix: PersistentStorage.getEventStoragePrefix(apiKey, normalizedInstanceName), logger: self.loggerProvider, diagonostics: self.diagonostics, diagnosticsClient: self.diagnosticsClient)
         self.identifyStorageProvider = identifyStorageProvider
-        ?? PersistentStorage(storagePrefix: PersistentStorage.getIdentifyStoragePrefix(apiKey, normalizedInstanceName), logger: self.loggerProvider, diagonostics: self.diagonostics)
+        ?? PersistentStorage(storagePrefix: PersistentStorage.getIdentifyStoragePrefix(apiKey, normalizedInstanceName), logger: self.loggerProvider, diagonostics: self.diagonostics, diagnosticsClient: self.diagnosticsClient)
         self.minIdLength = minIdLength
         self.partnerId = partnerId
         self.callback = callback
         self.flushMaxRetries = flushMaxRetries
         self.useBatch = useBatch
-        self.serverZone = serverZone
         self.serverUrl = serverUrl
         self.plan = plan
         self.ingestionMetadata = ingestionMetadata
@@ -211,70 +238,7 @@ public class Configuration {
         self.networkTrackingOptions = networkTrackingOptions
         self.enableAutoCaptureRemoteConfig = enableAutoCaptureRemoteConfig
         self.interactionsOptions = interactionsOptions
-    }
-
-    // TODO: remove when frustration GA
-    public convenience init(
-        apiKey: String,
-        flushQueueSize: Int = Defaults.flushQueueSize,
-        flushIntervalMillis: Int = Defaults.flushIntervalMillis,
-        instanceName: String = Defaults.instanceName,
-        optOut: Bool = Defaults.optOut,
-        storageProvider: (any Storage)? = nil,
-        identifyStorageProvider: (any Storage)? = nil,
-        logLevel: LogLevelEnum = Defaults.logLevel,
-        loggerProvider: any Logger = ConsoleLogger(),
-        minIdLength: Int? = nil,
-        partnerId: String? = nil,
-        callback: EventCallback? = nil,
-        flushMaxRetries: Int = Defaults.flushMaxRetries,
-        useBatch: Bool = Defaults.useBatch,
-        serverZone: ServerZone = Defaults.serverZone,
-        serverUrl: String? = nil,
-        plan: Plan? = nil,
-        ingestionMetadata: IngestionMetadata? = nil,
-        trackingOptions: TrackingOptions = Defaults.trackingOptions,
-        enableCoppaControl: Bool = Defaults.enableCoppaControl,
-        flushEventsOnClose: Bool = Defaults.flushEventsOnClose,
-        minTimeBetweenSessionsMillis: Int = Defaults.minTimeBetweenSessionsMillis,
-        autocapture: AutocaptureOptions = Defaults.autocaptureOptions,
-        identifyBatchIntervalMillis: Int = Defaults.identifyBatchIntervalMillis,
-        maxQueuedEventCount: Int = Defaults.maxQueuedEventCount,
-        migrateLegacyData: Bool = Defaults.migrateLegacyData,
-        offline: Bool? = false,
-        networkTrackingOptions: NetworkTrackingOptions = Defaults.networkTrackingOptions,
-        enableAutoCaptureRemoteConfig: Bool = Defaults.enableAutoCaptureRemoteConfig
-    ) {
-        self.init(apiKey: apiKey,
-                  flushQueueSize: flushQueueSize,
-                  flushIntervalMillis: flushIntervalMillis,
-                  instanceName: instanceName,
-                  optOut: optOut,
-                  storageProvider: storageProvider,
-                  identifyStorageProvider: identifyStorageProvider,
-                  logLevel: logLevel,
-                  loggerProvider: loggerProvider,
-                  minIdLength: minIdLength,
-                  partnerId: partnerId,
-                  callback: callback,
-                  flushMaxRetries: flushMaxRetries,
-                  useBatch: useBatch,
-                  serverZone: serverZone,
-                  serverUrl: serverUrl,
-                  plan: plan,
-                  ingestionMetadata: ingestionMetadata,
-                  trackingOptions: trackingOptions,
-                  enableCoppaControl: enableCoppaControl,
-                  flushEventsOnClose: flushEventsOnClose,
-                  minTimeBetweenSessionsMillis: minTimeBetweenSessionsMillis,
-                  autocapture: autocapture,
-                  identifyBatchIntervalMillis: identifyBatchIntervalMillis,
-                  maxQueuedEventCount: maxQueuedEventCount,
-                  migrateLegacyData: migrateLegacyData,
-                  offline: offline,
-                  networkTrackingOptions: networkTrackingOptions,
-                  enableAutoCaptureRemoteConfig: enableAutoCaptureRemoteConfig,
-                  interactionsOptions: Defaults.interactionsOptions)
+        self.enableRequestBodyCompression = enableRequestBodyCompression
     }
 
     func isValid() -> Bool {

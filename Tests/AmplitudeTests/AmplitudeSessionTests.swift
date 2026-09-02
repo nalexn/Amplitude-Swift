@@ -19,6 +19,7 @@ final class AmplitudeSessionTests: XCTestCase {
             storageProvider: storageMem,
             identifyStorageProvider: interceptStorageMem,
             minTimeBetweenSessionsMillis: 100,
+            offline: NetworkConnectivityCheckerPlugin.Disabled,
             enableAutoCaptureRemoteConfig: false
         )
     }
@@ -124,6 +125,44 @@ final class AmplitudeSessionTests: XCTestCase {
         XCTAssertEqual(event.deviceId, amplitude.getDeviceId())
     }
 
+    func testBackgroundOutOfSessionEventShouldNotCreateSessionEvents() throws {
+        let lastEventId: Int64 = 123
+        try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
+
+        let amplitude = Amplitude(configuration: configuration)
+
+        let eventCollector = EventCollectorPlugin()
+        amplitude.add(plugin: eventCollector)
+
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 1000, eventType: "test event 1"))
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 2000, sessionId: -1, eventType: "out of session event"))
+        amplitude.waitForTrackingQueue()
+
+        let collectedEvents = eventCollector.events
+
+        // 3 events (not 5 as in testDistantBackgroundEventsShouldStartNewSession):
+        // out-of-session event should not trigger session_end + session_start
+        XCTAssertEqual(collectedEvents.count, 3)
+
+        var event = collectedEvents[0]
+        XCTAssertEqual(event.eventType, Constants.AMP_SESSION_START_EVENT)
+        XCTAssertEqual(event.sessionId, 1000)
+        XCTAssertEqual(event.timestamp, 1000)
+        XCTAssertEqual(event.eventId, lastEventId+1)
+
+        event = collectedEvents[1]
+        XCTAssertEqual(event.eventType, "test event 1")
+        XCTAssertEqual(event.sessionId, 1000)
+        XCTAssertEqual(event.timestamp, 1000)
+        XCTAssertEqual(event.eventId, lastEventId+2)
+
+        event = collectedEvents[2]
+        XCTAssertEqual(event.eventType, "out of session event")
+        XCTAssertEqual(event.sessionId, -1)
+        XCTAssertEqual(event.timestamp, 2000)
+        XCTAssertEqual(event.eventId, lastEventId+3)
+    }
+
     func testBackgroundOutOfSessionEvent() throws {
         let lastEventId: Int64 = 123
         try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
@@ -133,6 +172,7 @@ final class AmplitudeSessionTests: XCTestCase {
             identifyStorageProvider: interceptStorageMem,
             minTimeBetweenSessionsMillis: 100,
             autocapture: [],
+            offline: NetworkConnectivityCheckerPlugin.Disabled,
             enableAutoCaptureRemoteConfig: false
         )
         let amplitude = Amplitude(configuration: customCongiguration)
@@ -151,8 +191,9 @@ final class AmplitudeSessionTests: XCTestCase {
         XCTAssertEqual(event.sessionId, -1)
         event = collectedEvents[1]
         XCTAssertEqual(event.eventType, "test event")
-        XCTAssertEqual(event.sessionId, 1000)
-        XCTAssertEqual(amplitude.getSessionId(), 1000)
+        // sessionId is 1050 (not 1000) because out-of-session event doesn't extend lastEventTime
+        XCTAssertEqual(event.sessionId, 1050)
+        XCTAssertEqual(amplitude.getSessionId(), 1050)
     }
 
     func testForegroundEventsShouldNotStartNewSession() throws {
@@ -501,7 +542,9 @@ final class AmplitudeSessionTests: XCTestCase {
 
         let collectedEvents = eventCollector.events
 
-        XCTAssertEqual(collectedEvents.count, 4)
+        // 6 events: out-of-session event at t=1050 doesn't extend lastEventTime,
+        // so test event 3 at t=1100 triggers a new session (1100-1000=100 >= 100ms timeout)
+        XCTAssertEqual(collectedEvents.count, 6)
 
         var event = collectedEvents[0]
         XCTAssertEqual(event.eventType, Constants.AMP_SESSION_START_EVENT)
@@ -528,10 +571,22 @@ final class AmplitudeSessionTests: XCTestCase {
         XCTAssertEqual(event.deviceId, amplitude.getDeviceId())
 
         event = collectedEvents[3]
-        XCTAssertEqual(event.eventType, "test event 3")
+        XCTAssertEqual(event.eventType, Constants.AMP_SESSION_END_EVENT)
         XCTAssertEqual(event.sessionId, 1000)
-        XCTAssertEqual(event.timestamp, 1100)
+        XCTAssertEqual(event.timestamp, 1000)
         XCTAssertEqual(event.eventId, lastEventId+4)
+
+        event = collectedEvents[4]
+        XCTAssertEqual(event.eventType, Constants.AMP_SESSION_START_EVENT)
+        XCTAssertEqual(event.sessionId, 1100)
+        XCTAssertEqual(event.timestamp, 1100)
+        XCTAssertEqual(event.eventId, lastEventId+5)
+
+        event = collectedEvents[5]
+        XCTAssertEqual(event.eventType, "test event 3")
+        XCTAssertEqual(event.sessionId, 1100)
+        XCTAssertEqual(event.timestamp, 1100)
+        XCTAssertEqual(event.eventId, lastEventId+6)
         XCTAssertEqual(event.userId, "user")
         XCTAssertEqual(event.deviceId, amplitude.getDeviceId())
     }
@@ -790,5 +845,142 @@ final class AmplitudeSessionTests: XCTestCase {
 
     func getDictionary(_ props: [String: Any?]) -> NSDictionary {
         return NSDictionary(dictionary: props as [AnyHashable: Any])
+    }
+
+    // MARK: - OptOut Session Event Tests
+
+    func testOptOutShouldNotSendSessionEventsWhenTracking() throws {
+        let lastEventId: Int64 = 123
+        try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
+
+        let optOutConfiguration = Configuration(
+            apiKey: "testOptOutSessionEvents",
+            optOut: true,
+            storageProvider: storageMem,
+            identifyStorageProvider: interceptStorageMem,
+            minTimeBetweenSessionsMillis: 100,
+            offline: NetworkConnectivityCheckerPlugin.Disabled,
+            enableAutoCaptureRemoteConfig: false
+        )
+        let amplitude = Amplitude(configuration: optOutConfiguration)
+
+        let eventCollector = EventCollectorPlugin()
+        amplitude.add(plugin: eventCollector)
+
+        // Track events that would normally trigger session_start
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 1000, eventType: "test event 1"))
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 1050, eventType: "test event 2"))
+        amplitude.waitForTrackingQueue()
+
+        let collectedEvents = eventCollector.events
+
+        // With optOut=true, no events should be collected (no session_start, no regular events)
+        XCTAssertEqual(collectedEvents.count, 0)
+    }
+
+    func testOptOutShouldNotSendSessionEventsOnEnterForeground() throws {
+        let lastEventId: Int64 = 123
+        try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
+
+        let optOutConfiguration = Configuration(
+            apiKey: "testOptOutForegroundSessionEvents",
+            optOut: true,
+            storageProvider: storageMem,
+            identifyStorageProvider: interceptStorageMem,
+            minTimeBetweenSessionsMillis: 100,
+            offline: NetworkConnectivityCheckerPlugin.Disabled,
+            enableAutoCaptureRemoteConfig: false
+        )
+        let amplitude = Amplitude(configuration: optOutConfiguration)
+
+        let eventCollector = EventCollectorPlugin()
+        amplitude.add(plugin: eventCollector)
+
+        // Enter foreground which would normally trigger session_start
+        amplitude.onEnterForeground(timestamp: 1000)
+        amplitude.waitForTrackingQueue()
+
+        let collectedEvents = eventCollector.events
+
+        // With optOut=true, no session_start event should be sent
+        XCTAssertEqual(collectedEvents.count, 0)
+    }
+
+    func testOptOutShouldNotSendSessionEndEventsOnSetSessionId() throws {
+        let lastEventId: Int64 = 123
+        try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
+
+        // Start with optOut=false to establish a session
+        let amplitude = Amplitude(configuration: configuration)
+
+        let eventCollector = EventCollectorPlugin()
+        amplitude.add(plugin: eventCollector)
+
+        // Track an event to start a session
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 1000, eventType: "test event 1"))
+        amplitude.waitForTrackingQueue()
+
+        // Should have session_start and test event
+        XCTAssertEqual(eventCollector.events.count, 2)
+        XCTAssertEqual(eventCollector.events[0].eventType, Constants.AMP_SESSION_START_EVENT)
+        XCTAssertEqual(eventCollector.events[1].eventType, "test event 1")
+
+        // Now enable optOut
+        amplitude.configuration.optOut = true
+
+        // Set a new session ID which would normally trigger session_end and session_start
+        amplitude.setSessionId(timestamp: 2000)
+        amplitude.waitForTrackingQueue()
+
+        // No new events should be added because optOut is true
+        XCTAssertEqual(eventCollector.events.count, 2)
+    }
+
+    func testOptOutDisabledAfterEnableShouldSendSessionEvents() throws {
+        let lastEventId: Int64 = 123
+        try storageMem.write(key: StorageKey.LAST_EVENT_ID, value: lastEventId)
+
+        let optOutConfiguration = Configuration(
+            apiKey: "testOptOutToggle",
+            optOut: true,
+            storageProvider: storageMem,
+            identifyStorageProvider: interceptStorageMem,
+            minTimeBetweenSessionsMillis: 100,
+            offline: NetworkConnectivityCheckerPlugin.Disabled,
+            enableAutoCaptureRemoteConfig: false
+        )
+        let amplitude = Amplitude(configuration: optOutConfiguration)
+
+        let eventCollector = EventCollectorPlugin()
+        amplitude.add(plugin: eventCollector)
+
+        // Try to track with optOut=true
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 1000, eventType: "test event 1"))
+        amplitude.waitForTrackingQueue()
+
+        // No events should be collected
+        XCTAssertEqual(eventCollector.events.count, 0)
+
+        // Disable optOut
+        amplitude.configuration.optOut = false
+
+        // Now track an event - should trigger session_start and the event
+        amplitude.track(event: BaseEvent(userId: "user", timestamp: 2000, eventType: "test event 2"))
+        amplitude.waitForTrackingQueue()
+
+        let collectedEvents = eventCollector.events
+
+        // Should have session_start and test event 2
+        XCTAssertEqual(collectedEvents.count, 2)
+
+        var event = collectedEvents[0]
+        XCTAssertEqual(event.eventType, Constants.AMP_SESSION_START_EVENT)
+        XCTAssertEqual(event.sessionId, 2000)
+        XCTAssertEqual(event.timestamp, 2000)
+
+        event = collectedEvents[1]
+        XCTAssertEqual(event.eventType, "test event 2")
+        XCTAssertEqual(event.sessionId, 2000)
+        XCTAssertEqual(event.timestamp, 2000)
     }
 }

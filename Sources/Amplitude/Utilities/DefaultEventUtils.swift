@@ -7,6 +7,10 @@ public class DefaultEventUtils {
 
     private weak var amplitude: Amplitude?
 
+    private var trackAppLifecycles: Bool {
+        amplitude?.autocaptureManager.isEnabled(.appLifecycles) ?? false
+    }
+
     public init(amplitude: Amplitude) {
         self.amplitude = amplitude
     }
@@ -29,7 +33,7 @@ public class DefaultEventUtils {
             try? amplitude.storage.write(key: StorageKey.APP_VERSION, value: currentVersion)
         }
 
-        guard amplitude.configuration.autocapture.contains(.appLifecycles) else {
+        guard trackAppLifecycles else {
             return
         }
 
@@ -64,18 +68,18 @@ public class DefaultEventUtils {
     }
 
     func trackAppOpenedEvent(fromBackground: Bool = false) {
-        guard let amplitude = amplitude,
-              amplitude.configuration.autocapture.contains(.appLifecycles) else {
+        guard let amplitude = amplitude, trackAppLifecycles else {
             return
         }
 
         let info = Bundle.main.infoDictionary
         let currentBuild = info?["CFBundleVersion"] as? String
         let currentVersion = info?["CFBundleShortVersionString"] as? String
-        self.amplitude?.track(eventType: Constants.AMP_APPLICATION_OPENED_EVENT, eventProperties: [
+        amplitude.track(eventType: Constants.AMP_APPLICATION_OPENED_EVENT, eventProperties: [
             Constants.AMP_APP_BUILD_PROPERTY: currentBuild ?? "",
             Constants.AMP_APP_VERSION_PROPERTY: currentVersion ?? "",
             Constants.AMP_APP_FROM_BACKGROUND_PROPERTY: fromBackground,
         ])
     }
+
 }

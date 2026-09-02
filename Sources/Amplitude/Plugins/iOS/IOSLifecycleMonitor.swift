@@ -14,10 +14,8 @@ import SwiftUI
 class IOSLifecycleMonitor: UtilityPlugin {
 
     private var utils: DefaultEventUtils?
-    private var sendApplicationOpenedOnDidBecomeActive = false
-    private var remoteConfigSubscription: Any?
-    private(set) var trackScreenViews = false
-    private(set) var trackElementInteractions = false
+    private var sendAppInstalledOnDidBecomeActive = false
+    private var sendAppOpenedOnDidBecomeActive = false
 
     override init() {
         super.init()
@@ -43,12 +41,11 @@ class IOSLifecycleMonitor: UtilityPlugin {
     public override func setup(amplitude: Amplitude) {
         super.setup(amplitude: amplitude)
         utils = DefaultEventUtils(amplitude: amplitude)
-        trackScreenViews = amplitude.configuration.autocapture.contains(.screenViews)
-        trackElementInteractions = amplitude.configuration.autocapture.contains(.elementInteractions)
 
-        // If we are already in the foreground, dispatch installed / opened events now
+        let appState = IOSVendorSystem.applicationState
+        // If app state is already active, dispatch installed / opened events now
         // we want to dispatch this from the initiating thread to maintain event ordering.
-        if IOSVendorSystem.applicationState == .active {
+        if appState == .active {
             // this is added in init - launch on trackingQueue to allow identity to be set
             // prior to firing the event
             amplitude.trackingQueue.async { [self] in
@@ -56,45 +53,33 @@ class IOSLifecycleMonitor: UtilityPlugin {
                 amplitude.onEnterForeground(timestamp: currentTimestamp)
                 utils?.trackAppOpenedEvent()
             }
+        // If app state is inactive, it won't receive didFinishLaunching and willEnterForeground
+        // notifications anymore, we need to send install and opened event when become active
+        } else if appState == .inactive {
+            sendAppInstalledOnDidBecomeActive = true
+            sendAppOpenedOnDidBecomeActive = true
         }
 
         updateAutocaptureSetup()
 
-        if amplitude.configuration.enableAutoCaptureRemoteConfig {
-            remoteConfigSubscription = amplitude
-                .amplitudeContext
-                .remoteConfigClient
-                .subscribe(key: Constants.RemoteConfig.Key.autocapture) { [weak self] config, _, _ in
-                    guard let self, let config else {
-                        return
-                    }
-
-                    if let pageViews = config["pageViews"] as? Bool {
-                        trackScreenViews = pageViews
-                    }
-
-                    if let interactions = config["elementInteractions"] as? Bool {
-                        trackElementInteractions = interactions
-                    }
-
-                    updateAutocaptureSetup()
-                }
+        // Listen for autocapture config changes from the manager
+        amplitude.autocaptureManager.onChange { [weak self] _ in
+            self?.updateAutocaptureSetup()
         }
     }
 
     private func updateAutocaptureSetup() {
-        guard let amplitude else {
-            return
-        }
+        guard let amplitude else { return }
+        let manager = amplitude.autocaptureManager
 
-        if trackScreenViews {
+        if manager.isEnabled(.screenViews) {
             UIKitScreenViews.register(amplitude)
         } else {
             UIKitScreenViews.unregister(amplitude)
         }
 
         // Register UIKitElementInteractions if either element interactions or frustration interactions is enabled
-        let needsElementInteractions = trackElementInteractions || amplitude.configuration.autocapture.contains(.frustrationInteractions)
+        let needsElementInteractions = manager.isEnabled(.elementInteractions) || manager.isEnabled(.frustrationInteractions)
         if needsElementInteractions {
             UIKitElementInteractions.register(amplitude)
         } else {
@@ -111,20 +96,28 @@ class IOSLifecycleMonitor: UtilityPlugin {
         // Pre SceneDelegate apps wil not fire a willEnterForeground notification on app launch.
         // Instead, use the initial applicationDidBecomeActive
         if !IOSVendorSystem.usesScenes {
-            sendApplicationOpenedOnDidBecomeActive = true
+            sendAppOpenedOnDidBecomeActive = true
         }
     }
 
     @objc
     func applicationDidBecomeActive(notification: Notification) {
-        guard sendApplicationOpenedOnDidBecomeActive else {
+        guard sendAppInstalledOnDidBecomeActive || sendAppOpenedOnDidBecomeActive else {
             return
         }
-        sendApplicationOpenedOnDidBecomeActive = false
+        let sendInstall = sendAppInstalledOnDidBecomeActive
+        let sendOpened = sendAppOpenedOnDidBecomeActive
+        sendAppInstalledOnDidBecomeActive = false
+        sendAppOpenedOnDidBecomeActive = false
 
-        amplitude?.onEnterForeground(timestamp: currentTimestamp)
         amplitude?.trackingQueue.async { [self] in
-            utils?.trackAppOpenedEvent()
+            if sendInstall {
+                utils?.trackAppUpdatedInstalledEvent()
+            }
+            amplitude?.onEnterForeground(timestamp: currentTimestamp)
+            if sendOpened {
+                utils?.trackAppOpenedEvent()
+            }
         }
     }
 
@@ -150,7 +143,7 @@ class IOSLifecycleMonitor: UtilityPlugin {
             return
         }
         amplitude.onExitForeground(timestamp: currentTimestamp)
-        if amplitude.configuration.autocapture.contains(.appLifecycles) {
+        if amplitude.autocaptureManager.isEnabled(.appLifecycles) {
             amplitude.track(eventType: Constants.AMP_APPLICATION_BACKGROUNDED_EVENT)
         }
     }
@@ -163,17 +156,8 @@ class IOSLifecycleMonitor: UtilityPlugin {
         super.teardown()
 
         if let amplitude {
-            if let remoteConfigSubscription {
-                amplitude.amplitudeContext.remoteConfigClient.unsubscribe(remoteConfigSubscription)
-            }
             UIKitScreenViews.unregister(amplitude)
             UIKitElementInteractions.unregister(amplitude)
-        }
-    }
-
-    deinit {
-        if let amplitude, let remoteConfigSubscription {
-            amplitude.amplitudeContext.remoteConfigClient.unsubscribe(remoteConfigSubscription)
         }
     }
 }

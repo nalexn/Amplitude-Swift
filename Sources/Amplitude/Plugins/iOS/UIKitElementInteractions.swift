@@ -55,17 +55,23 @@ class UIKitElementInteractions {
     }()
 
     static func register(_ amplitude: Amplitude) {
+        let manager = amplitude.autocaptureManager
+
         lock.withLock {
             amplitudeInstances.add(amplitude)
             let identifier = ObjectIdentifier(amplitude)
+            let frustrationInteractions = manager.isEnabled(.frustrationInteractions)
 
-            if amplitude.configuration.autocapture.contains(.frustrationInteractions) {
-                if amplitude.configuration.interactionsOptions.rageClick.enabled {
-                    rageClickDetectors[identifier] = RageClickDetector(amplitude: amplitude)
-                }
-                if amplitude.configuration.interactionsOptions.deadClick.enabled {
-                    deadClickDetectors[identifier] = DeadClickDetector(amplitude: amplitude)
-                }
+            if frustrationInteractions, manager.rageClickEnabled {
+                rageClickDetectors[identifier] = RageClickDetector(amplitude: amplitude)
+            } else if let rageClickDetector = rageClickDetectors.removeValue(forKey: identifier) {
+                rageClickDetector.reset()
+            }
+
+            if frustrationInteractions, manager.deadClickEnabled {
+                deadClickDetectors[identifier] = DeadClickDetector(amplitude: amplitude)
+            } else if let deadClickDetector = deadClickDetectors.removeValue(forKey: identifier) {
+                deadClickDetector.reset()
             }
         }
         setupMethodSwizzling
@@ -77,14 +83,12 @@ class UIKitElementInteractions {
             amplitudeInstances.remove(amplitude)
             let identifier = ObjectIdentifier(amplitude)
 
-            if let rageClickDetector = rageClickDetectors[identifier] {
+            if let rageClickDetector = rageClickDetectors.removeValue(forKey: identifier) {
                 rageClickDetector.reset()
-                rageClickDetectors.removeValue(forKey: identifier)
             }
 
-            if let deadClickDetector = deadClickDetectors[identifier] {
+            if let deadClickDetector = deadClickDetectors.removeValue(forKey: identifier) {
                 deadClickDetector.reset()
-                deadClickDetectors.removeValue(forKey: identifier)
             }
         }
     }
@@ -94,8 +98,8 @@ class UIKitElementInteractions {
         // Text fields in SwiftUI are identifiable only after the text field is edited.
 
         // Track element interaction events only if .elementInteractions is enabled
-        amplitudeInstances.allObjects.forEach { amplitude in
-            if amplitude.configuration.autocapture.contains(.elementInteractions) {
+        lock.withLock {
+            for amplitude in amplitudeInstances.allObjects where amplitude.autocaptureManager.isEnabled(.elementInteractions) {
                 let elementInteractionEvent = view.eventData.elementInteractionEvent(for: "didEndEditing")
                 amplitude.track(event: elementInteractionEvent)
             }
@@ -128,33 +132,106 @@ class UIKitElementInteractions {
         }
     }
 
-    fileprivate static func processFrustrationInteractionForView(_ view: UIView,
-                                                                 location: CGPoint,
-                                                                 action: String,
-                                                                 source: EventData.Source?,
-                                                                 sourceName: String?) {
-        let clickData = FrustrationClickData(
-            time: Date(),
-            eventData: view.eventData,
-            location: location,
-            action: action,
-            source: source,
-            sourceName: sourceName
-        )
+    private static let physicalTapDedupDistanceThreshold: CGFloat = 12
+    private static let physicalTapDedupTimeThreshold: TimeInterval = 0.005
+    private static var physicalTapDedupCandidates: [PhysicalTapDedupCandidate] = []
 
+    private final class PhysicalTapDedupCandidate {
+        weak var window: UIWindow?
+        let location: CGPoint
+        let timestamp: TimeInterval
+
+        init(view: UIView, location: CGPoint, timestamp: TimeInterval) {
+            self.window = view.window
+            self.location = location
+            self.timestamp = timestamp
+        }
+    }
+
+    fileprivate static func processFrustrationInteractionForView(_ view: UIView,
+                                                                 clickData: FrustrationClickData,
+                                                                 includeRageClick: Bool,
+                                                                 includeDeadClick: Bool) {
         lock.withLock {
+            guard !isDuplicatePhysicalTap(view: view, location: clickData.location) else {
+                return
+            }
+
             for amplitude in amplitudeInstances.allObjects {
-                if amplitude.configuration.isRageClickEnabled,
-                   !view.amp_ignoreRageClick {
-                    rageClickDetectors[ObjectIdentifier(amplitude)]?.processClick(clickData)
+                let identifier = ObjectIdentifier(amplitude)
+
+                // Check if rage click detector exists (enabled via remote config or local config)
+                if includeRageClick, let rageClickDetector = rageClickDetectors[identifier] {
+                    rageClickDetector.processClick(clickData)
                 }
 
-                if amplitude.configuration.isDeadClickEnabled,
-                   !view.amp_ignoreDeadClick {
-                    deadClickDetectors[ObjectIdentifier(amplitude)]?.processClick(clickData)
+                // Check if dead click detector exists (enabled via remote config or local config)
+                if includeDeadClick, let deadClickDetector = deadClickDetectors[identifier] {
+                    deadClickDetector.processClick(clickData)
                 }
             }
         }
+    }
+
+    static func isDuplicatePhysicalTap(view: UIView,
+                                       location: CGPoint,
+                                       timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        physicalTapDedupCandidates.removeAll { candidate in
+            candidate.window == nil || timestamp - candidate.timestamp > physicalTapDedupTimeThreshold
+        }
+
+        let duplicate = physicalTapDedupCandidates.contains { candidate in
+            guard isWithinPhysicalTapDedupDistance(candidate.location, location) else {
+                return false
+            }
+
+            return isSameWindow(candidate.window, view.window)
+        }
+
+        if !duplicate {
+            physicalTapDedupCandidates.append(PhysicalTapDedupCandidate(view: view, location: location, timestamp: timestamp))
+        }
+
+        return duplicate
+    }
+
+    private static func isWithinPhysicalTapDedupDistance(_ point1: CGPoint, _ point2: CGPoint) -> Bool {
+        return hypot(point1.x - point2.x, point1.y - point2.y) <= physicalTapDedupDistanceThreshold
+    }
+
+    private static func isSameWindow(_ window1: UIWindow?, _ window2: UIWindow?) -> Bool {
+        guard let window1, let window2 else { return false }
+        return window1 === window2
+    }
+
+    static func resetPhysicalTapDedupCandidates() {
+        physicalTapDedupCandidates.removeAll()
+    }
+
+    // MARK: - Which detectors a view is eligible for
+
+    static func shouldProcessRageClick(for view: UIView) -> Bool {
+        return !view.amp_ignoreRageClick
+    }
+
+    /// Dead click detection needs to know whether the interface responded to what the user touched.
+    /// Inside a `WKWebView` no such signal exists, for two independent reasons:
+    ///
+    /// - Session Replay's snapshotter never walks into a web view's layer subtree, so web content
+    ///   never moves the native layer tree whose diff produces an interface signal.
+    /// - Web content *is* captured when Session Replay is configured to do so, but it arrives as
+    ///   rrweb events on a separate channel that only stores them — it never notifies interface
+    ///   signal receivers. And `InterfaceChangeSignal` carries no region, only a timestamp, so even
+    ///   if it did, a signal could not be tied to the view that was touched.
+    ///
+    /// So inside a web view a tap is reported dead whenever nothing else in the app happens to
+    /// change within the timeout, and cleared whenever something unrelated does. Suppress it there
+    /// until web content changes can raise an interface signal of their own — wiring the web view
+    /// event channel into that notification is what makes this suppression unnecessary.
+    ///
+    /// Rage click does not depend on interface signals and stays enabled.
+    static func shouldProcessDeadClick(for view: UIView) -> Bool {
+        return !view.amp_ignoreDeadClick && !view.amp_isInsideWebView
     }
 }
 
@@ -186,14 +263,18 @@ extension UIApplication {
         else { return sendActionResult }
 
         // Track element interaction events only if .elementInteractions is enabled
-        UIKitElementInteractions.amplitudeInstances.allObjects.forEach { amplitude in
-            if amplitude.configuration.autocapture.contains(.elementInteractions) {
+        UIKitElementInteractions.lock.withLock {
+            for amplitude in UIKitElementInteractions.amplitudeInstances.allObjects where amplitude.autocaptureManager.isEnabled(.elementInteractions) {
                 let elementInteractionEvent = control.eventData.elementInteractionEvent(for: actionEvent, from: .actionMethod, withName: NSStringFromSelector(action))
                 amplitude.track(event: elementInteractionEvent)
             }
         }
 
-        if actionEvent == "touch", !control.amp_ignoreRageClick || !control.amp_ignoreDeadClick {
+        if actionEvent == "touch" {
+            let shouldProcessRageClick = UIKitElementInteractions.shouldProcessRageClick(for: control)
+            let shouldProcessDeadClick = UIKitElementInteractions.shouldProcessDeadClick(for: control)
+            guard shouldProcessRageClick || shouldProcessDeadClick else { return sendActionResult }
+
             var location = CGPoint.zero
 
             if let event = event, let touch = event.allTouches?.first {
@@ -212,7 +293,20 @@ extension UIApplication {
                 }
             }
 
-            UIKitElementInteractions.processFrustrationInteractionForView(control, location: location, action: actionEvent, source: .actionMethod, sourceName: NSStringFromSelector(action))
+            let clickData = FrustrationClickData(
+                eventData: control.eventData,
+                location: location,
+                action: actionEvent,
+                source: .actionMethod,
+                sourceName: NSStringFromSelector(action)
+            )
+
+            UIKitElementInteractions.processFrustrationInteractionForView(
+                control,
+                clickData: clickData,
+                includeRageClick: shouldProcessRageClick,
+                includeDeadClick: shouldProcessDeadClick
+            )
         }
 
         return sendActionResult
@@ -238,10 +332,16 @@ extension UIGestureRecognizer {
 #endif
         }
 
+        var isTap = false
         let gestureAction: String?
         switch self {
-        case is UITapGestureRecognizer:
+        case let tapGestureRecognizer as UITapGestureRecognizer:
             gestureAction = "tap"
+#if !os(tvOS)
+            isTap = tapGestureRecognizer.numberOfTapsRequired == 1 && tapGestureRecognizer.numberOfTouchesRequired == 1
+#else
+            isTap = tapGestureRecognizer.numberOfTapsRequired == 1
+#endif
         case is UISwipeGestureRecognizer:
             gestureAction = "swipe"
         case is UIPanGestureRecognizer:
@@ -271,16 +371,32 @@ extension UIGestureRecognizer {
         guard let gestureAction else { return }
 
         // Track element interaction events only if .elementInteractions is enabled
-        UIKitElementInteractions.amplitudeInstances.allObjects.forEach { amplitude in
-            if amplitude.configuration.autocapture.contains(.elementInteractions) {
+        UIKitElementInteractions.lock.withLock {
+            for amplitude in UIKitElementInteractions.amplitudeInstances.allObjects where amplitude.autocaptureManager.isEnabled(.elementInteractions) {
                 let elementInteractionEvent = view.eventData.elementInteractionEvent(for: gestureAction, from: .gestureRecognizer, withName: descriptiveTypeName)
                 amplitude.track(event: elementInteractionEvent)
             }
         }
 
-        if !view.amp_ignoreDeadClick || !view.amp_ignoreRageClick {
-            let location = self.location(in: nil)
-            UIKitElementInteractions.processFrustrationInteractionForView(view, location: location, action: gestureAction, source: .gestureRecognizer, sourceName: descriptiveTypeName)
+        guard isTap else { return }
+
+        let shouldProcessRageClick = UIKitElementInteractions.shouldProcessRageClick(for: view)
+        let shouldProcessDeadClick = UIKitElementInteractions.shouldProcessDeadClick(for: view)
+
+        if shouldProcessDeadClick || shouldProcessRageClick {
+            let clickData = FrustrationClickData(
+                eventData: view.eventData,
+                location: location(in: nil),
+                action: gestureAction,
+                source: .gestureRecognizer,
+                sourceName: descriptiveTypeName)
+
+            UIKitElementInteractions.processFrustrationInteractionForView(
+                view,
+                clickData: clickData,
+                includeRageClick: shouldProcessRageClick,
+                includeDeadClick: shouldProcessDeadClick
+            )
         }
     }
 }

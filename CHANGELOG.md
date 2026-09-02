@@ -1,3 +1,210 @@
+## [1.18.8](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.7...v1.18.8) (2026-08-25)
+
+
+### Bug Fixes
+
+* **frustration-interactions:** suppress dead clicks in web views and apply ignore flags to subviews ([#430](https://github.com/amplitude/Amplitude-Swift/issues/430)) ([fe1f862](https://github.com/amplitude/Amplitude-Swift/commit/fe1f862457f41f61d15272ba2fc1edb668729ae8))
+
+## [1.18.7](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.6...v1.18.7) (2026-08-04)
+
+
+### Bug Fixes
+
+* **identity:** stop sending empty identify when properties are cleared ([8735171](https://github.com/amplitude/Amplitude-Swift/commit/8735171cc875ebadd435f0a797004214ccb4aba6))
+* tvOS should use cache directory for storage ([631c591](https://github.com/amplitude/Amplitude-Swift/commit/631c5910858be4c07c4620ef813d2f9e947df212))
+
+## [1.18.6](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.5...v1.18.6) (2026-07-08)
+
+
+### Bug Fixes
+
+* require AmplitudeCore 1.4.8 and AnalyticsConnector 1.3.2 ([#418](https://github.com/amplitude/Amplitude-Swift/issues/418)) ([f20e866](https://github.com/amplitude/Amplitude-Swift/commit/f20e8660b8439672df2ba1dba36012e2b9f8eb1f))
+
+## [1.18.5](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.4...v1.18.5) (2026-06-04)
+
+
+### Bug Fixes
+
+* increase tap dedup timeout ([d3834c4](https://github.com/amplitude/Amplitude-Swift/commit/d3834c4c5a3297a0eb4c4b71d1597a4209725c16))
+
+## [1.18.4](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.3...v1.18.4) (2026-06-02)
+
+
+### Bug Fixes
+
+* update AmplitudeCore to 1.4.6 to fix libswiftCore notarization error ([#406](https://github.com/amplitude/Amplitude-Swift/issues/406)) ([f4da9c9](https://github.com/amplitude/Amplitude-Swift/commit/f4da9c96514177a0067094fbb5d0a5d71bb248d8)), closes [amplitude/AmplitudeCore-Swift#81](https://github.com/amplitude/AmplitudeCore-Swift/issues/81)
+
+## [1.18.3](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.2...v1.18.3) (2026-05-21)
+
+
+### Bug Fixes
+
+* dedup frustration interactions ([c7ce6c5](https://github.com/amplitude/Amplitude-Swift/commit/c7ce6c57ae6e03cc4bdd5c11530cb87a9efdaafa))
+
+## [1.18.2](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.1...v1.18.2) (2026-05-05)
+
+
+### Bug Fixes
+
+* update AmplitudeCore min version ([4645020](https://github.com/amplitude/Amplitude-Swift/commit/4645020ab6e5b93994717fde4329af53adf79cef))
+* Use Application Support for event storage ([f4594d0](https://github.com/amplitude/Amplitude-Swift/commit/f4594d034aa8f06f15e9d16c07edb3c35910de12))
+
+## [1.18.1](https://github.com/amplitude/Amplitude-Swift/compare/v1.18.0...v1.18.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* quarantine unreadable event files and recover from unopenable ones ([#398](https://github.com/amplitude/Amplitude-Swift/issues/398)) ([9b69807](https://github.com/amplitude/Amplitude-Swift/commit/9b69807c004313273ea4e8d398b9d20172fee875))
+
+# [1.18.0](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.5...v1.18.0) (2026-04-10)
+
+
+### Features
+
+* make header and body capture feature GA & fix bug for allowlist rule ([#396](https://github.com/amplitude/Amplitude-Swift/issues/396)) ([590a329](https://github.com/amplitude/Amplitude-Swift/commit/590a329a3e389dc6bcf1ccceeeed0a345d760121))
+
+## [1.17.5](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.4...v1.17.5) (2026-03-12)
+
+
+### Bug Fixes
+
+* out-of-session event should not extend or trigger a session ([#382](https://github.com/amplitude/Amplitude-Swift/issues/382)) ([5c790b4](https://github.com/amplitude/Amplitude-Swift/commit/5c790b481de2dbe72a6ab4d067af488d6f9c8403))
+
+## [1.17.4](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.3...v1.17.4) (2026-03-06)
+
+
+### Bug Fixes
+
+* parsing logic of slashes in body capture ([#380](https://github.com/amplitude/Amplitude-Swift/issues/380)) ([93c504b](https://github.com/amplitude/Amplitude-Swift/commit/93c504be0f96da380b6ba42241b4b33aec640123))
+
+## [1.17.3](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.2...v1.17.3) (2026-02-10)
+
+
+### Bug Fixes
+
+* disable compression on uploads for custom server urls unless opted in. ([12bbd67](https://github.com/amplitude/Amplitude-Swift/commit/12bbd67a4d8c08b58525e6cdddd40075e7ca3b1a))
+
+## [1.17.2](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.1...v1.17.2) (2026-02-07)
+
+
+### Bug Fixes
+
+* crash while getting platform string ([#368](https://github.com/amplitude/Amplitude-Swift/issues/368)) ([b96da35](https://github.com/amplitude/Amplitude-Swift/commit/b96da3593febe209a2cc1584d4f9a6f8be548666))
+
+## [1.17.1](https://github.com/amplitude/Amplitude-Swift/compare/v1.17.0...v1.17.1) (2026-01-29)
+
+
+### Bug Fixes
+
+* gzip upload bodies ([74ff6b0](https://github.com/amplitude/Amplitude-Swift/commit/74ff6b0b193a9914a3cbd8a989ff8961cbc46e1e))
+
+# [1.17.0](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.6...v1.17.0) (2026-01-29)
+
+
+### Features
+
+* use LogLevel from Core ([81a0e07](https://github.com/amplitude/Amplitude-Swift/commit/81a0e07e54537e0002bb8f08b3b1f75d42e67c79))
+
+## [1.16.6](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.5...v1.16.6) (2026-01-21)
+
+
+### Bug Fixes
+
+* crash when bundleIdentifier is nil ([#358](https://github.com/amplitude/Amplitude-Swift/issues/358)) ([0a68b73](https://github.com/amplitude/Amplitude-Swift/commit/0a68b73ae851cccdc15b3d2b92a593d8ed8a4893))
+
+## [1.16.5](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.4...v1.16.5) (2026-01-09)
+
+
+### Bug Fixes
+
+* update Cocoapods/Carthage deps ([077425e](https://github.com/amplitude/Amplitude-Swift/commit/077425e2d6f860098397dc4a7e60e9de16a4ec29))
+
+## [1.16.4](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.3...v1.16.4) (2026-01-08)
+
+
+### Bug Fixes
+
+* optout setting still recording session start/end events ([#352](https://github.com/amplitude/Amplitude-Swift/issues/352)) ([8102be0](https://github.com/amplitude/Amplitude-Swift/commit/8102be064d843810f5341ec35ea094abf328e184))
+
+## [1.16.3](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.2...v1.16.3) (2026-01-05)
+
+
+### Bug Fixes
+
+* app install and opened not fired at specific case ([#347](https://github.com/amplitude/Amplitude-Swift/issues/347)) ([fea1c13](https://github.com/amplitude/Amplitude-Swift/commit/fea1c137208c5eab67fac0a3817aec45fa2deb3d))
+
+## [1.16.2](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.1...v1.16.2) (2025-12-22)
+
+
+### Bug Fixes
+
+* xcode 26.2 bug causes crash on iOS 15 ([#349](https://github.com/amplitude/Amplitude-Swift/issues/349)) ([f63bd60](https://github.com/amplitude/Amplitude-Swift/commit/f63bd601261a83dd650a37d8758ad8f2d4a76f1f))
+
+## [1.16.1](https://github.com/amplitude/Amplitude-Swift/compare/v1.16.0...v1.16.1) (2025-12-17)
+
+
+### Bug Fixes
+
+* Empty Commit to trigger a build ([4eb7580](https://github.com/amplitude/Amplitude-Swift/commit/4eb7580df02aa41f29a0a8028b31593b62ad25c2))
+
+# [1.16.0](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.5...v1.16.0) (2025-12-17)
+
+
+### Bug Fixes
+
+* centralize autpcapture logic ([#341](https://github.com/amplitude/Amplitude-Swift/issues/341)) ([19faeaf](https://github.com/amplitude/Amplitude-Swift/commit/19faeaf15b7ccdb9ab6839729ab3d6d8891c1e95))
+* Incorrect implementation of the atomic wrapper ([#343](https://github.com/amplitude/Amplitude-Swift/issues/343)) ([ecce5a4](https://github.com/amplitude/Amplitude-Swift/commit/ecce5a4b0b8d744f0064ed5737e99cc40ed3a5c7))
+
+
+### Features
+
+* integrate diagnostics client ([#337](https://github.com/amplitude/Amplitude-Swift/issues/337)) ([77d0411](https://github.com/amplitude/Amplitude-Swift/commit/77d04110c9ba930971bbcf4854aece7820724a13))
+
+## [1.15.5](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.4...v1.15.5) (2025-12-05)
+
+
+### Bug Fixes
+
+* network tracking not initialized for specify scenario ([#338](https://github.com/amplitude/Amplitude-Swift/issues/338)) ([13b9765](https://github.com/amplitude/Amplitude-Swift/commit/13b97659d063d911d685758a60afa8921dd4b773))
+
+## [1.15.4](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.3...v1.15.4) (2025-11-15)
+
+
+### Bug Fixes
+
+* prevent network tracking plugin remote config update crash ([#336](https://github.com/amplitude/Amplitude-Swift/issues/336)) ([06b1315](https://github.com/amplitude/Amplitude-Swift/commit/06b131544236408d150a4bbb65a7e59ab67f35d8))
+
+## [1.15.3](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.2...v1.15.3) (2025-11-05)
+
+
+### Bug Fixes
+
+* support onReset plugin lifecycle event ([ed883e8](https://github.com/amplitude/Amplitude-Swift/commit/ed883e8414f58658a708033c21f612da0c441a8c))
+
+## [1.15.2](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.1...v1.15.2) (2025-10-20)
+
+
+### Bug Fixes
+
+* improve timeline thread safety ([60de801](https://github.com/amplitude/Amplitude-Swift/commit/60de80198762cc08901af5df6447614f4aca173f))
+* use correct remote config key for block lists ([361d540](https://github.com/amplitude/Amplitude-Swift/commit/361d540a89c9901d50be3f74c7ad035fd6e2c160))
+
+## [1.15.1](https://github.com/amplitude/Amplitude-Swift/compare/v1.15.0...v1.15.1) (2025-09-29)
+
+
+### Bug Fixes
+
+* add appLifecycles remote config support ([#328](https://github.com/amplitude/Amplitude-Swift/issues/328)) ([8c7a376](https://github.com/amplitude/Amplitude-Swift/commit/8c7a37639570fe7210c82f641d7d35a34dc359e8))
+
+# [1.15.0](https://github.com/amplitude/Amplitude-Swift/compare/v1.14.0...v1.15.0) (2025-09-13)
+
+
+### Features
+
+* add autocapture support for frustration and network tracking ([#317](https://github.com/amplitude/Amplitude-Swift/issues/317)) ([5f70980](https://github.com/amplitude/Amplitude-Swift/commit/5f70980f182607cd4566617e08e7895b2306d9b0))
+* add urls and header body support for network tracking ([#320](https://github.com/amplitude/Amplitude-Swift/issues/320)) ([82620af](https://github.com/amplitude/Amplitude-Swift/commit/82620af315161db2f04e9ead239761cd7a171cf9))
+* make frustration interaction GA ([#323](https://github.com/amplitude/Amplitude-Swift/issues/323)) ([414bffe](https://github.com/amplitude/Amplitude-Swift/commit/414bffe4d857118eedb5f9c87aab97f14df836dc))
+
 # [1.14.0](https://github.com/amplitude/Amplitude-Swift/compare/v1.13.9...v1.14.0) (2025-07-23)
 
 

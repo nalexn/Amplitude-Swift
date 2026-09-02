@@ -7,6 +7,12 @@
 
 import Foundation
 
+#if AMPLITUDE_DISABLE_UIKIT
+@_spi(Internal) import AmplitudeCoreNoUIKit
+#else
+@_spi(Internal) import AmplitudeCore
+#endif
+
 class PersistentStorage: Storage {
     typealias EventBlock = URL
 
@@ -29,8 +35,10 @@ class PersistentStorage: Storage {
     let storageVersionKey: String
     let logger: (any Logger)?
     let diagonostics: Diagnostics
+    let diagonosticsClient: CoreDiagnostics
+    private var didExcludeStorageFromBackup = false
 
-    init(storagePrefix: String, logger: (any Logger)?, diagonostics: Diagnostics) {
+    init(storagePrefix: String, logger: (any Logger)?, diagonostics: Diagnostics, diagnosticsClient: CoreDiagnostics) {
         self.storagePrefix = storagePrefix == PersistentStorage.DEFAULT_STORAGE_PREFIX || storagePrefix.starts(with: "\(PersistentStorage.DEFAULT_STORAGE_PREFIX)-")
             ? storagePrefix
             : "\(PersistentStorage.DEFAULT_STORAGE_PREFIX)-\(storagePrefix)"
@@ -40,8 +48,11 @@ class PersistentStorage: Storage {
         self.storageVersionKey = "\(PersistentStorage.STORAGE_VERSION).\(self.storagePrefix)"
         self.logger = logger
         self.diagonostics = diagonostics
+        self.diagonosticsClient = diagnosticsClient
         // Make sure Amplitude data is sandboxed per app
-        self.appPath = isStorageSandboxed() ? "" : "\(Bundle.main.bundleIdentifier!)/"
+        self.appPath = Self.getAppPath(sandboxed: isStorageSandboxed())
+
+        migrateLegacyStorageDirectories()
         handleV1Files()
     }
 
@@ -91,10 +102,46 @@ class PersistentStorage: Storage {
                 return readV1File(content: content!)
             }
         } catch {
-            diagonostics.addErrorLog(error.localizedDescription)
-            logger?.error(message: error.localizedDescription)
+            diagonosticsClient.increment(name: "analytics.events.file.read.failed")
+            diagonosticsClient.recordEvent(name: "analytics.events.file.read.failed", properties: [
+                "file": eventBlock.lastPathComponent,
+                "error": error.localizedDescription
+            ])
+            logger?.error(message: "Could not read events file \(eventBlock.lastPathComponent): \(error.localizedDescription)")
+            // Quarantine the unreadable file so the upload pipeline can make progress.
+            // Without this, the same file blocks every subsequent flush forever.
+            quarantineUnreadableFile(eventBlock)
         }
         return content
+    }
+
+    private func quarantineUnreadableFile(_ file: URL) {
+        syncQueue.sync {
+            guard fileManager.fileExists(atPath: file.path) else { return }
+            let quarantineDir = getQuarantineDirectory()
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let target = quarantineDir.appendingPathComponent("\(file.lastPathComponent).\(timestamp)")
+            do {
+                try fileManager.createDirectory(at: quarantineDir, withIntermediateDirectories: true, attributes: nil)
+                try fileManager.moveItem(at: file, to: target)
+                logger?.error(message: "Quarantined unreadable events file: \(file.lastPathComponent) -> \(PersistentStorage.QUARANTINE_DIR_NAME)/\(target.lastPathComponent)")
+                if let contents = try? fileManager.contentsOfDirectory(atPath: quarantineDir.path) {
+                    diagonosticsClient.recordHistogram(name: "analytics.events.file.quarantined.count", value: Double(contents.count))
+                }
+            } catch {
+                diagonosticsClient.increment(name: "analytics.events.file.quarantine.failed")
+                diagonosticsClient.recordEvent(name: "analytics.events.file.quarantine.failed", properties: [
+                    "file": file.lastPathComponent,
+                    "error": error.localizedDescription
+                ])
+                logger?.error(message: "Unable to quarantine unreadable events file \(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func getQuarantineDirectory() -> URL {
+        return getEventsStorageDirectory(createDirectory: false)
+            .appendingPathComponent(PersistentStorage.QUARANTINE_DIR_NAME)
     }
 
     func remove(eventBlock: EventBlock) {
@@ -136,7 +183,8 @@ class PersistentStorage: Storage {
             storage: self,
             eventPipeline: eventPipeline,
             eventBlock: eventBlock,
-            eventsString: eventsString
+            eventsString: eventsString,
+            diagnosticsClient: diagonosticsClient
         )
     }
 
@@ -150,6 +198,8 @@ class PersistentStorage: Storage {
             for url in urls {
                 try? fileManager.removeItem(atPath: url.path)
             }
+            try? fileManager.removeItem(at: getQuarantineDirectory())
+            didExcludeStorageFromBackup = false
         }
     }
 
@@ -197,6 +247,14 @@ class PersistentStorage: Storage {
     internal func isStorageSandboxed() -> Bool {
         return SandboxHelper().isSandboxEnabled()
     }
+
+    private static func getAppPath(sandboxed: Bool) -> String {
+        if sandboxed {
+            return ""
+        }
+        let appIdentifier = Bundle.main.bundleIdentifier ?? (Bundle.main.executablePath ?? ProcessInfo.processInfo.processName).fnv1a64String()
+        return "\(appIdentifier)/"
+    }
 }
 
 extension PersistentStorage {
@@ -207,6 +265,10 @@ extension PersistentStorage {
     static let DELMITER = "\u{0000}"
     static let STORAGE_VERSION = "amplitude.events.storage.version"
     static let STORAGE_V2_PREFIX = "v2-"
+    // Leading "." keeps the quarantine folder hidden so contentsOfDirectory
+    // with skipsHiddenFiles (the default in getEventFiles and
+    // getCurrentEventFile) ignores it without any explicit filtering.
+    static let QUARANTINE_DIR_NAME = ".quarantine"
 
     enum Exception: Error {
         case unsupportedType
@@ -261,7 +323,7 @@ extension PersistentStorage {
         finish(file: currentFile)
 
         let allFiles = try? fileManager.contentsOfDirectory(
-            at: getEventsStorageDirectory(),
+            at: eventsStorageDirectory,
             includingPropertiesForKeys: [],
             options: .skipsHiddenFiles
         )
@@ -280,17 +342,105 @@ extension PersistentStorage {
         return result
     }
 
+    private func migrateLegacyStorageDirectories() {
+        syncQueue.sync {
+            let legacyStorageDirectory = getLegacyEventsStorageDirectory(createDirectory: false)
+            guard fileManager.fileExists(atPath: legacyStorageDirectory.path) else {
+                return
+            }
+
+            defer {
+                // Clean up directory if it is empty
+                let remainingLegacyFiles = try? fileManager.contentsOfDirectory(
+                    at: legacyStorageDirectory,
+                    includingPropertiesForKeys: [],
+                    options: []
+                )
+                if remainingLegacyFiles?.isEmpty == true {
+                    try? fileManager.removeItem(at: legacyStorageDirectory)
+                }
+            }
+
+            // Remove anything in legacy quarantine directory
+            let legacyQuarantineDirectory = legacyStorageDirectory
+                .appendingPathComponent(PersistentStorage.QUARANTINE_DIR_NAME)
+            if fileManager.fileExists(atPath: legacyQuarantineDirectory.path) {
+                try? fileManager.removeItem(at: legacyQuarantineDirectory)
+            }
+
+            // Move event files
+            let legacyFiles = (try? fileManager.contentsOfDirectory(
+                at: legacyStorageDirectory,
+                includingPropertiesForKeys: [],
+                options: .skipsHiddenFiles
+            )) ?? []
+
+            guard !legacyFiles.isEmpty else {
+                return
+            }
+
+            let storageDirectory = getEventsStorageDirectory(createDirectory: true)
+            for legacyFile in legacyFiles {
+                var destinationFile = storageDirectory.appendingPathComponent(legacyFile.lastPathComponent)
+                if legacyFile.pathExtension == PersistentStorage.TEMP_FILE_EXTENSION {
+                    destinationFile = destinationFile.deletingPathExtension()
+                }
+                if fileManager.fileExists(atPath: destinationFile.path) {
+                    let suffix = "-\(Date().timeIntervalSince1970)-\(Int.random(in: 0..<1000))"
+                    destinationFile = destinationFile.appendFileNameSuffix(suffix: suffix)
+                }
+                do {
+                    try fileManager.moveItem(at: legacyFile, to: destinationFile)
+                } catch {
+                    diagonostics.addErrorLog(error.localizedDescription)
+                    logger?.error(message: "Unable to migrate legacy event file: \(legacyFile.path)")
+                }
+            }
+        }
+    }
+
     internal func getEventsStorageDirectory(createDirectory: Bool = true) -> URL {
-        // TODO: Update to use applicationSupportDirectory for all platforms (this will require a migration)
-        // let searchPathDirectory = FileManager.SearchPathDirectory.applicationSupportDirectory
-        // tvOS doesn't have access to document
+        #if os(tvOS)
+            let searchPathDirectory = FileManager.SearchPathDirectory.cachesDirectory
+        #else
+            let searchPathDirectory = FileManager.SearchPathDirectory.applicationSupportDirectory
+        #endif
+        let storageUrl = getEventsStorageDirectory(searchPathDirectory: searchPathDirectory,
+                                                   createDirectory: createDirectory)
+
+        // This call is prohibitively expensive to be called at each event, run it once per instance lifetime.
+        if createDirectory, !didExcludeStorageFromBackup {
+            var mutableStorageUrl = storageUrl
+            do {
+                var resourceValues = URLResourceValues()
+                resourceValues.isExcludedFromBackup = true
+                try mutableStorageUrl.setResourceValues(resourceValues)
+                didExcludeStorageFromBackup = true
+            } catch {
+                let nsError = error as NSError
+                diagonostics.addErrorLog("Unable to exclude storage directory from backup: \(nsError.domain)#\(nsError.code)")
+                logger?.error(message: "Unable to exclude storage directory from backup: \(storageUrl.path)")
+            }
+        }
+
+        return storageUrl
+    }
+
+    internal func getLegacyEventsStorageDirectory(createDirectory: Bool = true) -> URL {
+        // tvOS used Application Support briefly in 1.18.2-1.18.6. Earlier
+        // versions already used Caches, which is now the active directory.
+        #if os(tvOS)
+            let searchPathDirectory = FileManager.SearchPathDirectory.applicationSupportDirectory
         // macOS /Documents dir might be synced with iCloud
-        #if os(tvOS) || os(macOS)
+        #elseif os(macOS)
             let searchPathDirectory = FileManager.SearchPathDirectory.cachesDirectory
         #else
             let searchPathDirectory = FileManager.SearchPathDirectory.documentDirectory
         #endif
+        return getEventsStorageDirectory(searchPathDirectory: searchPathDirectory, createDirectory: createDirectory)
+    }
 
+    private func getEventsStorageDirectory(searchPathDirectory: FileManager.SearchPathDirectory, createDirectory: Bool) -> URL {
         let urls = fileManager.urls(for: searchPathDirectory, in: .userDomainMask)
         let docUrl = urls[0]
         let storageUrl = docUrl.appendingPathComponent("amplitude/\(appPath ?? "")\(eventsFileKey)/")
@@ -310,6 +460,22 @@ extension PersistentStorage {
         } else if outputStream == nil {
             // this can happen if an instance was terminated before finishing a file.
             open(file: storeFile)
+        }
+
+        // If the file still can't be opened for writing (e.g., Data Protection
+        // locked, permissions, filesystem error), roll the unopenable file out
+        // of the .tmp namespace and start a fresh one. Without this, the
+        // optional chaining at outputStream?.write below silently drops every
+        // new event into the void.
+        if outputStream == nil {
+            diagonosticsClient.increment(name: "analytics.events.file.open.failed")
+            diagonosticsClient.recordEvent(name: "analytics.events.file.open.failed", properties: [
+                "file": storeFile.lastPathComponent
+            ])
+            logger?.error(message: "Could not open events file for writing \(storeFile.lastPathComponent); rolling over to a fresh file.")
+            forceAdvanceToNewFile(storeFile)
+            storeFile = getCurrentEventFile()
+            start(file: storeFile)
         }
 
         // Verify file size isn't too large
@@ -359,27 +525,33 @@ extension PersistentStorage {
     }
 
     private func start(file: URL) {
+        // Only assign outputStream after both the init AND the create/open
+        // succeed. Otherwise a throw from create() leaves a half-initialized
+        // stream with a nil fileHandle — which would pass the "outputStream ==
+        // nil" guard in storeEvent while still silently dropping writes via
+        // optional chaining at outputStream?.write.
         do {
-            outputStream = try OutputFileStream(fileURL: file)
-            try outputStream?.create()
+            let stream = try OutputFileStream(fileURL: file)
+            try stream.create()
+            outputStream = stream
         } catch {
             diagonostics.addErrorLog(error.localizedDescription)
             logger?.error(message: error.localizedDescription)
+            outputStream = nil
         }
     }
 
     private func open(file: URL) {
-        if outputStream == nil {
-            // this can happen if an instance was terminated before finishing a file.
-            do {
-                outputStream = try OutputFileStream(fileURL: file)
-                if let outputStream = outputStream {
-                    try outputStream.open()
-                }
-            } catch {
-                diagonostics.addErrorLog(error.localizedDescription)
-                logger?.error(message: error.localizedDescription)
-            }
+        guard outputStream == nil else { return }
+        // this can happen if an instance was terminated before finishing a file.
+        do {
+            let stream = try OutputFileStream(fileURL: file)
+            try stream.open()
+            outputStream = stream
+        } catch {
+            diagonostics.addErrorLog(error.localizedDescription)
+            logger?.error(message: error.localizedDescription)
+            outputStream = nil
         }
     }
 
@@ -396,6 +568,14 @@ extension PersistentStorage {
         }
         self.outputStream = nil
 
+        forceAdvanceToNewFile(file)
+    }
+
+    // Rolls `file` out of the .tmp namespace and bumps the stored file index so
+    // the next getCurrentEventFile() call returns a fresh path. Used both by
+    // finish() on normal rollover and by storeEvent() when the current file
+    // can't be opened for writing.
+    private func forceAdvanceToNewFile(_ file: URL) {
         rename(file)
         let currentFileIndex: Int = (getCurrentEventFileIndex() ?? 0) + 1
         userDefaults?.set(currentFileIndex, forKey: eventsFileKey)

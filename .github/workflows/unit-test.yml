@@ -16,46 +16,65 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: iOS
-            xcode: 16.1
+            xcode: 16.4
             device: "iPhone 16"
             test-destination-os: latest
 
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: iOS
-            xcode: 16.1
-            test-destination-os: 17.2
-            device: "iPhone 15"
+            xcode: 16.4
+            test-destination-os: 18.5
+            device: "iPhone 16"
           
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: macOS
-            xcode: 16.1
+            xcode: 16.4
             test-destination-os: latest
 
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: tvOS
-            xcode: 16.1
+            xcode: 16.4
             test-destination-os: latest
-            device: "Apple TV 4K (3rd generation)"
+            device: "Apple TV"
 
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: watchOS
-            xcode: 16.1
+            xcode: 16.4
             test-destination-os: latest
-            device: "Apple Watch Series 10 (46mm)"
+            device: "Apple Watch Series 10 (42mm)"
 
-          - runs-on: macos-14
+          - runs-on: macos-15
             platform: visionOS
-            xcode: 16.1
-            test-destination-os: latest
+            xcode: 16.4
+            test-destination-os: 2.5
             device: "Apple Vision Pro"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Set Xcode ${{ matrix.xcode }}
         run: |
           sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
+      - name: Install Apple platform SDKs
+        run: |
+          # Warm up CoreSimulator to avoid "Unable to connect to simulator":
+          # https://github.com/actions/runner-images/issues/12862#issuecomment-3239326872
+          xcrun simctl list > /dev/null
+          case "${{ matrix.platform }}" in
+            iOS)
+              sudo xcodebuild -downloadPlatform iOS
+              ;;
+            tvOS)
+              sudo xcodebuild -downloadPlatform tvOS
+              ;;
+            watchOS)
+              sudo xcodebuild -downloadPlatform watchOS
+              ;;
+            visionOS)
+              sudo xcodebuild -downloadPlatform visionOS
+              ;;
+          esac
       - name: List Simulators
         run: |
           xcrun simctl list
@@ -69,18 +88,21 @@ jobs:
               xcodebuild test \
                 -scheme Amplitude-Swift-Package \
                 -sdk iphonesimulator \
+                -retry-tests-on-failure \
                 -destination 'platform=iOS Simulator,OS=${{ matrix.test-destination-os }},name=${{ matrix.device }}'
               ;;
             macOS)
               xcodebuild test \
                 -scheme Amplitude-Swift-Package \
                 -sdk macosx \
+                -retry-tests-on-failure \
                 -destination 'platform=macOS'
               ;;
             tvOS)
               xcodebuild \
                 -scheme Amplitude-Swift-Package \
                 -sdk appletvsimulator \
+                -retry-tests-on-failure \
                 -destination 'platform=tvOS Simulator,OS=${{ matrix.test-destination-os }},name=${{ matrix.device }}' \
                 test
               ;;
@@ -88,6 +110,7 @@ jobs:
               xcodebuild \
                 -scheme Amplitude-Swift-Package \
                 -sdk watchsimulator \
+                -retry-tests-on-failure \
                 -destination 'platform=watchOS Simulator,OS=${{ matrix.test-destination-os }},name=${{ matrix.device }}' \
                 test
               ;;
@@ -95,22 +118,30 @@ jobs:
               xcodebuild \
                 -scheme Amplitude-Swift-Package \
                 -sdk xrsimulator \
+                -retry-tests-on-failure \
                 -destination 'platform=visionOS Simulator,OS=${{ matrix.test-destination-os }},name=${{ matrix.device }}' \
                 test
               ;;
           esac
   objc-example-test:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-      - name: Set Xcode 15
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set Xcode 16
         run: |
-          sudo xcode-select -switch /Applications/Xcode_16.1.app
+          sudo xcode-select -switch /Applications/Xcode_16.4.app
+      - name: Install Apple platform SDKs
+        run: |
+          # Warm up CoreSimulator to avoid "Unable to connect to simulator":
+          # https://github.com/actions/runner-images/issues/12862#issuecomment-3239326872
+          xcrun simctl list > /dev/null
+          sudo xcodebuild -downloadPlatform iOS
       - name: Objective-C Example Tests (iOS)
         working-directory: Examples/AmplitudeObjCExample
         run: |
           xcodebuild test \
             -scheme AmplitudeObjCExample \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 16'
+            -retry-tests-on-failure \
+            -destination 'platform=iOS Simulator,OS=18.5,name=iPhone 16'

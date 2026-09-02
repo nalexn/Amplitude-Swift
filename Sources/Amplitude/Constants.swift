@@ -5,20 +5,80 @@
 //  Created by Marvin Liu on 10/27/22.
 //
 
+#if AMPLITUDE_DISABLE_UIKIT
+@_spi(Internal) import AmplitudeCoreNoUIKit
+#else
+@_spi(Internal) import AmplitudeCore
+#endif
+
 import Foundation
 
+public typealias LogLevelEnum = LogLevel
+
+public extension LogLevelEnum {
+
+    @available(*, deprecated, renamed: "LogLevel.off")
+    static let OFF = Self.off
+
+    @available(*, deprecated, renamed: "LogLevel.error")
+    static let ERROR = Self.error
+
+    @available(*, deprecated, renamed: "LogLevel.warn")
+    static let WARN = Self.warn
+
+    @available(*, deprecated, renamed: "LogLevel.log")
+    static let LOG = Self.log
+
+    @available(*, deprecated, renamed: "LogLevel.debug")
+    static let DEBUG = Self.debug
+}
+
 @objc(AMPLogLevel)
-public enum LogLevelEnum: Int, Sendable {
+public enum ObjCLogLevel: Int, Sendable {
     case OFF
     case ERROR
     case WARN
     case LOG
     case DEBUG
+
+    init(_ logLevel: LogLevelEnum) {
+        switch logLevel {
+        case .off:
+            self = .OFF
+        case .error:
+            self = .ERROR
+        case .warn:
+            self = .WARN
+        case .log:
+            self = .LOG
+        case .debug:
+            self = .DEBUG
+        @unknown default:
+            self = .OFF
+        }
+    }
+
+    var logLevel: LogLevel {
+        switch self {
+        case .OFF:
+            return .off
+        case .ERROR:
+            return .error
+        case .WARN:
+            return .warn
+        case .LOG:
+            return .log
+        case .DEBUG:
+            return .debug
+        @unknown default:
+            return .off
+        }
+    }
 }
 
 public struct Constants {
     static let SDK_LIBRARY = "amplitude-swift"
-    static let SDK_VERSION = "1.14.0"
+    static let SDK_VERSION = "1.18.8"
     public static let DEFAULT_API_HOST = "https://api2.amplitude.com/2/httpapi"
     public static let EU_DEFAULT_API_HOST = "https://api.eu.amplitude.com/2/httpapi"
     static let BATCH_API_HOST = "https://api2.amplitude.com/batch"
@@ -90,6 +150,10 @@ public struct Constants {
     static let AMP_NETWORK_COMPLETION_TIME_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Completion Time"
     static let AMP_NETWORK_REQUEST_BODY_SIZE_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Request Body Size"
     static let AMP_NETWORK_RESPONSE_BODY_SIZE_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Response Body Size"
+    static let AMP_NETWORK_REQUEST_HEADERS_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Request Headers"
+    static let AMP_NETWORK_RESPONSE_HEADERS_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Response Headers"
+    static let AMP_NETWORK_REQUEST_BODY_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Request Body"
+    static let AMP_NETWORK_RESPONSE_BODY_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Response Body"
 
     static let AMP_BEGIN_TIME_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)Begin Time"
     static let AMP_END_TIME_PROPERTY = "\(AMP_AMPLITUDE_PREFIX)End Time"
